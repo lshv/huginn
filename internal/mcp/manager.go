@@ -146,6 +146,8 @@ func (m *ServerManager) registerServerTools(serverName string, client *MCPClient
 		names = append(names, t.Name)
 	}
 	m.registeredTools[serverName] = names
+	// Keep provider tags in step with re-registration; see StartAll.
+	reg.TagTools(names, serverName)
 }
 
 // probeHealth sends a ping to ms.client and falls back to ListTools if the
@@ -232,6 +234,12 @@ func (m *ServerManager) StartAll(ctx context.Context, reg *tools.Registry) {
 			names = append(names, t.Name)
 		}
 		ms.registeredToolNames = names
+		// Tag tools with the MCP server name so per-agent toolbelts can scope to a
+		// single server. Without this the provider is "", which AllSchemasForProviders
+		// can only match via the "*" (allow-all) branch — making toolbelts all-or-
+		// nothing and letting any agent with a toolbelt reach every other server's
+		// tools, including another agent's identity-scoped Zammad instance.
+		reg.TagTools(names, cfg.Name)
 		m.clients = append(m.clients, ms)
 		go m.watchServer(svrCtx, ms, reg)
 	}
@@ -301,6 +309,9 @@ func (m *ServerManager) watchServer(ctx context.Context, ms *managedServer, reg 
 			names = append(names, t.Name)
 		}
 		ms.registeredToolNames = names
+		// Re-tag after a reconnect, or the agent silently loses access to this
+		// server's tools once its toolbelt names a provider; see StartAll.
+		reg.TagTools(names, ms.cfg.Name)
 		m.cbRecordSuccess(ms)
 		m.mu.Unlock()
 
