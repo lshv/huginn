@@ -2,6 +2,7 @@ package agent
 
 import (
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 )
@@ -67,4 +68,24 @@ func TestPrefetchCache_GetUpdateLastAccess(t *testing.T) {
 	if got := c.get("a"); got == "" {
 		t.Error("expected 'a' to still be cached after recent access")
 	}
+}
+
+// TestPrefetchCache_ConcurrentAccess reproduces two agent turns starting on the
+// same scheduler tick: every goroutine calls get (which evicts) and set at once.
+// Without the cache mutex this dies with "concurrent map writes" under -race.
+func TestPrefetchCache_ConcurrentAccess(t *testing.T) {
+	c := newPrefetchCache(time.Millisecond, 8)
+	var wg sync.WaitGroup
+	for g := 0; g < 16; g++ {
+		wg.Add(1)
+		go func(g int) {
+			defer wg.Done()
+			for i := 0; i < 500; i++ {
+				key := fmt.Sprintf("k%d", (g+i)%12)
+				c.set(key, "v", time.Millisecond)
+				c.get(key)
+			}
+		}(g)
+	}
+	wg.Wait()
 }

@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/scrypster/huginn/internal/proactivity"
@@ -38,7 +39,13 @@ type prefetchCacheEntry struct {
 type briefingCacheEntry = prefetchCacheEntry
 
 // prefetchCache is a bounded, TTL-aware in-memory cache for prefetch results.
+//
+// It guards its own map: get evicts and touches lastAccess, so it is a writer
+// even though callers hold only Orchestrator.mu.RLock. Two agent turns starting
+// on the same scheduler tick used to race here and crash the process with
+// "fatal error: concurrent map writes".
 type prefetchCache struct {
+	mu      sync.Mutex
 	maxAge  time.Duration
 	maxSize int
 	entries map[string]*prefetchCacheEntry
@@ -61,6 +68,8 @@ func newPrefetchCache(maxAge time.Duration, maxSize int) *prefetchCache {
 // get returns the cached value for key, or "" if not present / expired.
 // Evicts all entries older than maxAge on each call.
 func (c *prefetchCache) get(key string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	now := time.Now()
 	// Evict expired entries.
 	for k, e := range c.entries {
@@ -79,6 +88,8 @@ func (c *prefetchCache) get(key string) string {
 // set stores key→content with a TTL. If the cache is full, the LRU entry is
 // evicted first.
 func (c *prefetchCache) set(key, content string, ttl time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	now := time.Now()
 	// If key already exists, update in place.
 	if e, ok := c.entries[key]; ok {
