@@ -163,6 +163,7 @@ func (o *Orchestrator) ChatForSessionWithAgent(ctx context.Context, sessionID, u
 				Content: fmt.Sprintf("\u26a0\ufe0f Memory vault unavailable: %s. Memory features are disabled for this session.", vr.warning),
 			})
 		}
+		resolveAmbientVaultTools(vr, ag, sessionID)
 		if _, ok := vr.sessionReg.Get("muninn_recall"); ok {
 			msgs[0].Content += memoryModeInstruction(ag.MemoryMode, ag.VaultName, ag.VaultDescription)
 		}

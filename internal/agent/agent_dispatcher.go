@@ -550,10 +550,18 @@ func (o *Orchestrator) runAgentTurn(ctx context.Context, opts agentTurnOpts) err
 		}
 	}
 
-	// 2. Augment system prompt with memory-mode instructions and prefetched context.
+	// 2. Reconcile ambient MuninnDB tools with this agent's vault, then augment
+	// the system prompt with memory-mode instructions and prefetched context.
+	//
+	// A globally configured MuninnDB MCP server registers muninn_* tools into
+	// the shared registry for every agent. Those tools carry the server's own
+	// default vault, so when the per-agent vault connection above failed we
+	// must pin them to ag.VaultName — otherwise this agent's memory is written
+	// to a shared default vault while the prompt claims it is using its own.
+	resolveAmbientVaultTools(vr, ag, opts.sessionID)
+
 	systemPrompt := opts.systemPromptBase
 	if _, ok := vr.sessionReg.Get("muninn_recall"); ok {
-		slog.Info("vault tools available", "agent", ag.Name, "session_id", opts.sessionID, "vault", ag.VaultName)
 		systemPrompt += memoryModeInstruction(ag.MemoryMode, ag.VaultName, ag.VaultDescription)
 	}
 	if memCtx := o.prefetchMemoryContextWithEvents(ctx, vr.sessionReg, ag.Name, ag.VaultName, opts.userMsg, opts.prefetchCb); memCtx != "" {
