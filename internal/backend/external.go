@@ -10,9 +10,11 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"path"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -56,10 +58,51 @@ func openAICompatiblePath(endpoint, subPath string) string {
 	return ep + "/v1/" + subPath
 }
 
+// defaultExternalStreamStallTimeout is the fallback idle timeout for the SSE
+// scanner when HUGINN_EXTERNAL_STALL_TIMEOUT_SECS is unset or invalid.
+const defaultExternalStreamStallTimeout = 60 * time.Second
+
 // externalStreamStallTimeout is the maximum time the SSE scanner may be idle
 // (no non-empty line received) before the stream is aborted. Declared as a var
 // so tests in this package can lower the value to exercise the timeout path.
-var externalStreamStallTimeout = 60 * time.Second
+//
+// 60 s is too aggressive for local model servers: Ollama sends nothing at all
+// during prompt evaluation, so a large accumulated agent context (~20k tokens)
+// on local hardware can exceed the timeout during prefill and have the stream
+// killed seconds before the first token arrives — discarding the whole turn.
+// Override with HUGINN_EXTERNAL_STALL_TIMEOUT_SECS (e.g. 300) when pointing
+// Huginn at a slow local endpoint.
+var externalStreamStallTimeout = envDuration(
+	"HUGINN_EXTERNAL_STALL_TIMEOUT_SECS", defaultExternalStreamStallTimeout)
+
+// envDuration reads name as either a bare whole number of seconds ("300") or a
+// Go duration string ("5m", "180s"). The _SECS suffix follows the existing
+// HUGINN_* convention, but duration strings are accepted too so that the
+// natural-looking "180s" does not silently fall back to the default.
+//
+// Values that are absent, unparseable, or non-positive fall back to def. A
+// malformed value is logged rather than fatal: an unusable timeout should not
+// stop Huginn from starting.
+func envDuration(name string, def time.Duration) time.Duration {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return def
+	}
+	if secs, err := strconv.Atoi(raw); err == nil {
+		if secs > 0 {
+			return time.Duration(secs) * time.Second
+		}
+		slog.Warn("backend: ignoring non-positive duration env var; using default",
+			"var", name, "value", raw, "default", def)
+		return def
+	}
+	if d, err := time.ParseDuration(raw); err == nil && d > 0 {
+		return d
+	}
+	slog.Warn("backend: ignoring invalid duration env var; using default",
+		"var", name, "value", raw, "default", def)
+	return def
+}
 
 // externalModelLoadStatusDelay is the time to wait for a response header before
 // emitting a StreamStatus event to the client. Local model servers (e.g. Ollama)
